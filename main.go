@@ -54,10 +54,11 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 	}
 
 	for buf, err := ber.ReadPacket(reader); err == nil; buf, err = ber.ReadPacket(reader) {
+		fmt.Println("top loop")
 		if err != nil {
 			fmt.Println("Error reading:", err.Error())
 		}
-
+		fmt.Println(buf.Bytes())
 		//Add received package to the stack
 		messageList = append(messageList, buf)
 
@@ -67,14 +68,14 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 		cacheKey := hex.EncodeToString(hasher.Sum(nil))
 
 		//Check if the packet is in the cache
-		var reply *ber.Packet
+		var replies []ber.Packet
 		if x, found := c.Get(cacheKey); found && noCacheMisses {
 			fmt.Printf("CACHE HIT %s \n", cacheKey)
 
-			//Set reply to point to the deserialized packet
+			//Set replies to point to the deserialized packet
 			if x != nil {
-				replyPkg := x.(ber.Packet)
-				reply = &replyPkg
+				replyPkg := x.([]ber.Packet)
+				replies = replyPkg
 			}
 		} else {
 			fmt.Printf("CACHE MISS %s \n", cacheKey)
@@ -88,29 +89,35 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 			}
 
 			//Forward the request to the downstream server
-			reply = forwardRequest(downstreamConn, buf)
+			replies = forwardRequest(downstreamConn, buf)
 
 			//On closing the connection the original server does not return a reply so we cache a nil
-			if reply != nil {
-				c.Set(cacheKey, *reply, cache.DefaultExpiration)
+			if replies != nil {
+				c.Set(cacheKey, replies, cache.DefaultExpiration)
 			} else {
 				c.Set(cacheKey, nil, cache.DefaultExpiration)
 			}
 		}
 
-		//If we received a reply write it back to the client
-		if reply != nil {
-			conn.Write(reply.Bytes())
+		//If we received replies write them back to the client
+		if replies != nil {
+			for _, element := range replies {
+				conn.Write(element.Bytes())
+			}
 		}
 	}
 
 	conn.Close()
 }
 
-func forwardRequest(conn net.Conn, buffer *ber.Packet) *ber.Packet {
-	//Forward request to downstream connection
-	conn.Write(buffer.Bytes())
+func forwardRequest(conn net.Conn, buffer *ber.Packet) []ber.Packet {
+	//List of messages returned to the client
+	var packetList []ber.Packet
 
+	//Forward request to downstream connection
+	if buffer != nil {
+		conn.Write(buffer.Bytes())
+	}
 	//Fetch reply if any
 	replyReader := bufio.NewReader(conn)
 	replyBuf, err := ber.ReadPacket(replyReader)
@@ -118,7 +125,26 @@ func forwardRequest(conn net.Conn, buffer *ber.Packet) *ber.Packet {
 		fmt.Println(err)
 	}
 
-	return replyBuf
+	//Sometimes there is more than one packet hidden inside
+	if replyBuf != nil {
+		packetList = append(packetList, *replyBuf)
+
+		//TODO: add error handling here
+		//If this field is set to 4 it means there's more to be had
+		morePackagesRemaining := replyBuf.Children[1].Tag == 4
+
+		for morePackagesRemaining == true {
+			extraReply, err := ber.ReadPacket(replyReader)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			packetList = append(packetList, *extraReply)
+			morePackagesRemaining = extraReply.Children[1].Tag == 4
+		}
+	}
+
+	return packetList
 }
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
