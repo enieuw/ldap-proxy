@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
@@ -20,8 +21,13 @@ func main() {
 		fmt.Printf("Failed opening socket: %s\n", err)
 	}
 
+	cacheDuration, err := strconv.Atoi(getEnv("CACHE_DURATION_MINUTES", "15"))
+	if err != nil {
+		fmt.Printf("Error converting cache duration: %s\n", err)
+	}
+
 	//Initialize cache
-	c := cache.New(5*time.Minute, 10*time.Minute)
+	c := cache.New(time.Duration(cacheDuration)*time.Minute, time.Duration(2*cacheDuration)*time.Minute)
 
 	//Main for loop handling connections
 	for {
