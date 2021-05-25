@@ -54,11 +54,9 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 	}
 
 	for buf, err := ber.ReadPacket(reader); err == nil; buf, err = ber.ReadPacket(reader) {
-		fmt.Println("top loop")
 		if err != nil {
 			fmt.Println("Error reading:", err.Error())
 		}
-		fmt.Println(buf.Bytes())
 		//Add received package to the stack
 		messageList = append(messageList, buf)
 
