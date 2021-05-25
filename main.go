@@ -34,7 +34,14 @@ func main() {
 }
 
 func handleRequest(conn net.Conn, c *cache.Cache) {
+	//Reader from source
 	reader := bufio.NewReader(conn)
+	//List of messages returned to the client
+	var messageList []*ber.Packet
+	//Is this request cacheable or not? We stop caching the soon we miss once
+	var noCacheMisses = true
+
+	//Connection to downstream server
 	downstreamConn, err := net.Dial("tcp", getEnv("TARGET_SERVER", "127.0.0.1:389"))
 	if err != nil {
 		fmt.Printf("Failed opening socket to target: %s\n", err)
@@ -45,6 +52,9 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 			fmt.Println("Error reading:", err.Error())
 		}
 
+		//Add received package to the stack
+		messageList = append(messageList, buf)
+
 		//Generate cacheKey
 		hasher := sha1.New()
 		hasher.Write(buf.Bytes())
@@ -52,7 +62,7 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 
 		//Check if the packet is in the cache
 		var reply *ber.Packet
-		if x, found := c.Get(cacheKey); found {
+		if x, found := c.Get(cacheKey); found && noCacheMisses {
 			fmt.Printf("CACHE HIT %s \n", cacheKey)
 
 			//Set reply to point to the deserialized packet
@@ -60,9 +70,16 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 				replyPkg := x.(ber.Packet)
 				reply = &replyPkg
 			}
-
 		} else {
 			fmt.Printf("CACHE MISS %s \n", cacheKey)
+
+			//If we have one cache miss stop caching for this request and replay all previously sent messages for this request
+			if noCacheMisses && len(messageList) > 1 {
+				noCacheMisses = false
+				for _, element := range messageList[:len(messageList)-1] {
+					_ = forwardRequest(downstreamConn, element)
+				}
+			}
 
 			//Forward the request to the downstream server
 			reply = forwardRequest(downstreamConn, buf)
