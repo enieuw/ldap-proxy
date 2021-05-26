@@ -44,14 +44,9 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 	reader := bufio.NewReader(conn)
 	//List of messages returned to the client
 	var messageList []*ber.Packet
-	//Is this request cacheable or not? We stop caching the soon we miss once
+	//Is this request cacheable or not? We stop caching for this request as soon we miss once
 	var noCacheMisses = true
-
-	//Connection to downstream server
-	downstreamConn, err := net.Dial("tcp", getEnv("TARGET_SERVER", "127.0.0.1:389"))
-	if err != nil {
-		fmt.Printf("Failed opening socket to target: %s\n", err)
-	}
+	var downstreamConn net.Conn
 
 	for buf, err := ber.ReadPacket(reader); err == nil; buf, err = ber.ReadPacket(reader) {
 		if err != nil {
@@ -78,10 +73,20 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 		} else {
 			fmt.Printf("CACHE MISS %s \n", cacheKey)
 
+		    //Only initialize the downstream connection after a cache miss
+			if downstreamConn == nil {
+				//Connection to downstream server
+				downstreamConn, err = net.Dial("tcp", getEnv("TARGET_SERVER", "127.0.0.1:389"))
+				if err != nil {
+					fmt.Printf("Failed opening socket to target: %s\n", err)
+				}
+			}
+
 			//If we have one cache miss stop caching for this request and replay all previously sent messages for this request
 			if noCacheMisses && len(messageList) > 1 {
 				noCacheMisses = false
 				for _, element := range messageList[:len(messageList)-1] {
+					//We ignore these replies as they have already been cached
 					_ = forwardRequest(downstreamConn, element)
 				}
 			}
@@ -97,12 +102,16 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 			}
 		}
 
-		//If we received replies write them back to the client
+		//If we received one or more replies write them back to the client
 		if replies != nil {
 			for _, element := range replies {
 				conn.Write(element.Bytes())
 			}
 		}
+	}
+
+	if downstreamConn != nil {
+		downstreamConn.Close()
 	}
 
 	conn.Close()
