@@ -73,12 +73,16 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 		} else {
 			fmt.Printf("CACHE MISS %s \n", cacheKey)
 
-		    //Only initialize the downstream connection after a cache miss
+			//Only initialize the downstream connection after a cache miss
 			if downstreamConn == nil {
 				//Connection to downstream server
 				downstreamConn, err = net.Dial("tcp", getEnv("TARGET_SERVER", "127.0.0.1:389"))
 				if err != nil {
 					fmt.Printf("Failed opening socket to target: %s\n", err)
+
+					//We are having issues connecting to the downstream service so we disconnect
+					conn.Close()
+					return
 				}
 			}
 
