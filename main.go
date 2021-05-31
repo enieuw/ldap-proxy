@@ -91,12 +91,12 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 				noCacheMisses = false
 				for _, element := range messageList[:len(messageList)-1] {
 					//We ignore these replies as they have already been cached
-					_ = forwardRequest(downstreamConn, element)
+					_ = forwardRequest(&downstreamConn, element)
 				}
 			}
 
 			//Forward the request to the downstream server
-			replies = forwardRequest(downstreamConn, buf)
+			replies = forwardRequest(&downstreamConn, buf)
 
 			//On closing the connection the original server does not return a reply so we cache a nil
 			if replies != nil {
@@ -121,16 +121,18 @@ func handleRequest(conn net.Conn, c *cache.Cache) {
 	conn.Close()
 }
 
-func forwardRequest(conn net.Conn, buffer *ber.Packet) []ber.Packet {
+func forwardRequest(conn *net.Conn, buffer *ber.Packet) []ber.Packet {
 	//List of messages returned to the client
 	var packetList []ber.Packet
+	var downstreamConn net.Conn = *conn
 
 	//Forward request to downstream connection
 	if buffer != nil {
-		conn.Write(buffer.Bytes())
+		downstreamConn.Write(buffer.Bytes())
 	}
+
 	//Fetch reply if any
-	replyReader := bufio.NewReader(conn)
+	replyReader := bufio.NewReader(downstreamConn)
 	replyBuf, err := ber.ReadPacket(replyReader)
 	if err != nil {
 		fmt.Println(err)
